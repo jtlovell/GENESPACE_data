@@ -1,0 +1,169 @@
+---
+title: "GENESPACE MS part 5: Grass rho paralogs"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r }
+wd <- "/Users/lovell/Desktop/manuscripts/genespace_2022/GENESPACE_data/results/"
+library(GENESPACE)
+library(ggplot2)
+library(Biostrings)
+load(file.path(wd, "gparRho.rda"))
+gpar <- gparRho
+
+hits <- fread(file.path(wd, "rho/results/Sviridis_Phallii_synHits.txt.gz"), na.strings = c("", "NA"))
+hitsog <- subset(hits, isOg & isAnchor & isRep1 & isRep2)
+
+# pepHal <- readAAStringSet("GENESPACE_data/results/rho/peptide/Phallii.fa")
+# pepSet <- readAAStringSet("GENESPACE_data/results/rho//peptide/Sviridis.fa")
+# gff <- fread("GENESPACE_data/results/rho/results/gffWithOgs.txt.gz")
+# idv <- gff$id; names(idv) <- gff$ofID
+# idvSet <- idv[unique(hitsog$ofID1)]
+# idvHal <- idv[unique(hitsog$ofID2)]
+# alignList <- mclapply(1:nrow(hitsog), mc.cores = 8, function(i){
+#   s1 <- AAString(pepSet[[idvSet[hitsog$ofID1[i]]]])
+#   s2 <- AAString(pepHal[[idvHal[hitsog$ofID2[i]]]])
+#   alg <- pairwiseAlignment(s1, s2)
+#   return(alg)
+# })
+# save(alignList, file = "/Users/lovell/Desktop/manuscripts/genespace_2022/analysis/Sviridis_Phallii_align.rda")
+load("/Users/lovell/Desktop/manuscripts/genespace_2022/analysis/Sviridis_Phallii_align.rda")
+hitsog[,`:=`(pid1 = sapply(alignList, pid, type = "PID1"),
+             pid2 = sapply(alignList, pid, type = "PID2"))]
+hitsog[,isRho := grepl("sec", blkID)]
+hitsog[,isOverRetain := grepl("prim", blkID) & chr1 == "Chr_08" & chr2 == "Chr03"]
+hitsog[,isDefOg := gsub("_", "", chr1) == chr2]
+hitsog[,blkcat := ifelse(isRho, "rho", ifelse(isDefOg, "orth", ifelse(isOverRetain, "overr", "ambig")))]
+with(subset(hitsog, blkcat %in% c("rho", "orth")), wilcox.test(pid2 ~ blkcat))
+
+
+c8_c3 <- subset(hitsog, grepl("prim", blkID) & chr1 == "Chr_08" & chr2 == "Chr03")
+print(svRng <- range(c(c8_c3$start1, c8_c3$end1)))
+print(phRng <- range(c(c8_c3$start2, c8_c3$end2)))
+abs(diff(svRng))
+abs(diff(phRng))
+
+c8 <- subset(hitsog, chr1 == "Chr_08" & start1 < 10e6)
+# pdf("../figures/Fig2_window.pdf", height = 5, width = 5)
+ggplot(c8, aes(x = start1/1e6, y = pid2, col = blkcat == "orth"))+
+  geom_point(size = .25)+
+  stat_smooth(span = .25)+
+  scale_y_continuous(limits = c(50, 100), expand = c(0,0))+
+  scale_x_continuous(expand = c(0,0))+
+  geom_vline(xintercept = c(2180878/1e6, 283046/1e6), col = "red", lty = 2)+
+  scale_color_manual(values = c("darkorange", "dodgerblue2"), guide = "none")+
+  theme(panel.background = element_rect(fill = "black"),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid.major = element_line(size = .1, linetype = 2))
+# dev.off()
+
+c8 <- subset(hitsog, chr1 == "Chr_08" & blkcat %in% c("orth", "overr"))
+c8 <- subset(c8, start1 >= svRng[1] & end1 <= svRng[2] &
+               start2 >= phRng[1] & end2 <= phRng[2])
+r8 <- subset(hitsog, chr1 == "Chr_08" & blkcat %in% c("orth", "rho"))
+print(ct8 <- with(c8, tapply(pid2, blkcat, median)))
+print(rt8 <- with(r8, tapply(pid2, blkcat, median)))
+(ct8["orth"] - ct8["overr"])/ct8["orth"]
+(rt8["orth"] - rt8["rho"])/rt8["orth"]
+with(c8, wilcox.test(pid2 ~ blkcat))
+with(r8, wilcox.test(pid2 ~ blkcat))
+
+
+orReg <- calc_blkCoords(subset(c8, blkcat == "overr"))
+# -- overretained blocks on sviridis chr_08 and phallii chr03
+setkey(orReg, startBp1)
+knitr::kable(orReg[,c("blkID", "startBp1", "endBp1","startBp2", "endBp2", "nHits1", "orient")])
+
+subset(c8, blkcat == "overr")[,list(SvSize = max(end1)-min(start1),
+                                    PhSize = max(end2)-min(start2)), 
+                              by = "regID"]
+```
+
+
+
+```{r}
+hitsog[,n := uniqueN(ofID1), by = "blkID"]
+h <- subset(hitsog, n > 20)
+h[,regID := grepl("pri", regID)]
+# pdf("../figures/Fig2_dotplots.pdf", height = 5, width = 5)
+plot_hits(h,  reorderChrs = F, plotType = "regAnchor")
+# dev.off()
+```
+
+```{r}
+# pdf(file.path(wd, "../raw_plots/Fig3bSourcePlot_HitsByPID.pdf"), height = 4.5, width = 6)
+hs <- subset(h, grepl("3|7|8", chr1) & grepl("3|7|8", chr2) & isAnchor & isOg)
+hs[,blkMedPid := median(pid2), by = "blkID"]
+ggplot(hs, aes(x = arrayOrd1, y = arrayOrd2, col = blkMedPid))+
+  geom_point(size = .2)+
+  scale_color_viridis_c(option = "D", end = .9, direction = -1)+
+  facet_grid(chr2 ~ chr1, scale = "free", space = "free", as.table = F)+
+  scale_x_continuous(expand = c(0,0))+
+  scale_y_continuous(expand = c(0,0))+
+  theme(panel.background = element_rect(fill = "grey95"),
+        panel.grid = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())+
+  labs(x = "gene order (S. viridis)", y = "gene order (P. hallii)", col = "median PID")
+# dev.off()
+```
+
+
+```{r}
+wd <- "/Users/lovell/Desktop/manuscripts/genespace_2022/GENESPACE_data/results"
+load(file.path(wd, "gparRho.rda"))
+gpar <- gparRho
+
+bn <- file.path(wd, "rho")
+gpar$paths$results <- file.path(bn, "results")
+
+gpar$paths$mcscanxCall <- "/Users/lovell/Desktop/programs/MCScanX/"
+
+gpar$paths$blastDir <- file.path(bn, "/orthofinder/Results_Feb11/WorkingDirectory")
+
+gpar$paths$orthogroupsDir <- file.path(bn, "/orthofinder/Results_Feb11/Orthogroups")
+
+pdf(file.path(wd, "..", "raw_plots", "fullRhoRip2.pdf"), height = 3, width = 5)
+
+ovr <- subset(hitsog, blkcat == "overr")[,list(start = min(start1), end = max(end1)),
+                                 by = c("gen1", "chr1")]
+z8 <- with(subset(c8, blkcat == "overr"), data.table(
+  genome = gen1[1],
+  chr = chr1[1],
+  start = min(start1),
+  end = max(end1),
+  col = c("#FBAA19")))
+
+z8 <- with(subset(c8, blkcat == "overr"), data.table(
+  genome = gen1[1],
+  chr = chr1[1],
+  start = min(start1),
+  end = max(end1),
+  col = c("#FBAA19")))
+
+ripd <- plot_riparianHits(
+  gsParam = gpar,
+  refGenome = "rice",
+  useOrder = T,
+  labelChrBiggerThan = 100, 
+  minGenes2plot = 100,
+  useBlks = F,
+  braidAlpha = .5,
+  genomeLabCex = .5,
+  gapProp = 0.01, labelTheseGenomes = "", 
+  chrBorder = "white", 
+  chrRectBuffer = .5,
+  onlyTheseRegions = zx)
+dev.off()
+
+fig1_sourceData <- list(mammalX = ripdmam, avianZ = ripdavian)
+
+```
+

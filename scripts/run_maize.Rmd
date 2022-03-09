@@ -1,0 +1,121 @@
+---
+title: "Run GENESPACE vignettes- 26 Maize NAM founders"
+author: "JTLovell"
+date: "12-Feb 2022"
+output: pdf_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GENESPACE)
+```
+
+# 1. Global Parameters
+
+```{r globParam}
+baseDir <- "/Users/jlovell/Desktop/GENESPACE_data/results/"
+rawAnnotationDir <- "/Users/jlovell/Desktop/GENESPACE_data"
+mcscanDir <- "/Users/jlovell/Documents/comparative_genomics/programs/MCScanX"
+nThreads <- 4
+path2of <- "orthofinder" # since orthofinder is in the path via conda
+```
+
+
+# 2. Set parameters
+
+```{r MaizeParam}
+gens <- c(
+  "B73", "B97", "CML103", "CML228", "CML247", "CML277", "CML322", "CML333",
+  "CML52", "CML69", "HP301", "Il14H", "Ki11", "Ki3", "Ky21", "M162W", "M37W",
+  "Mo18W", "Ms71", "NC350", "NC358", "Oh43", "Oh7B", "P39", "Tx303", "Tzi8")
+Maize <- list(
+  wd = file.path(baseDir, "maize"),
+  speciesIDs = "maize",
+  genomes = data.table(cbind(genome = gens, version = gens, ploidy = 1)))
+
+MaizeParams <- list(
+  orthofinderMethod = "fast", # only uni-directional blast hits, only orthofinder -og
+  diamondMode = "fast", # use default diamond2 --fast
+  pepString = "fa",
+  blkSize = 10)
+```
+
+# 3 Initialize the Maize run with the above specified parameters
+
+```{r initMaize}
+gparMaize <- with(Maize, init_genespace(
+  genomeIDs = genomes$genome,
+  versionIDs = genomes$version,
+  ploidy = genomes$ploidy,
+  speciesIDs = rep(speciesIDs, length(genomes$genome)),
+  pepString = MaizeParams$pepString,
+  diamondMode = MaizeParams$diamondMode,
+  orthofinderMethod = MaizeParams$orthofinderMethod,
+  wd = wd,
+  nCores = nThreads,
+  path2orthofinder = path2of,
+  path2mcscanx = mcscanDir,
+  rawGenomeDir = rawAnnotationDir))
+```
+
+# 4 Parse the raw annotations. 
+
+Here, we need to specify some custom fields to get the right output. Also, for simplicity, we'll drop any chromosomes with the string "alt", as the ploidy in these regions is known to be > 1. 
+```{r MaizeAnnot}
+parse_annotations(
+  gsParam = gparMaize, gffEntryType = "gene", gffIdColumn = "ID",
+  headerSep = "_", headerEntryIndex = 1)
+
+# -- drop alt chromosomes
+for(i in gparMaize$genomes$genomeIDs){
+  gf <- gparMaize$paths$gff[i]
+  pf <- gparMaize$paths$peptide[i]
+  g <- fread(gf, showProgress = F, na.strings = c("", "NA"))
+  n <- sum(grepl("-alt_",g$chr, fixed = T))
+  cat(sprintf("\t%s:\t%s alt scaffold genes\n",i, n))
+  if(n > 0){
+    p <- Biostrings::readAAStringSet(pf)
+    g <- subset(g, !grepl("-alt_",g$chr, fixed = T))
+    p <- p[g$id]
+    Biostrings::writeXStringSet(p, filepath = pf)
+    fwrite(g, file = gf, sep = "\t", quote = F)
+  }
+}
+```
+
+# 5 Run OrthoFinder from within R. 
+
+Also set the synteny parameters as default. 
+
+```{r MaizeOf}
+gparMaize <- set_syntenyParams(gsParam = gparMaize, blkSize = MaizeParams$blkSize)
+gparMaize <- run_orthofinder(gsParam = gparMaize)
+```
+
+# 6 Build synteny data
+
+```{r MaizeSyn}
+gparMaize <- find_orthofinderResults(gsParam = gparMaize)
+gparMaize <- synteny(gsParam = gparMaize, overwrite = T)
+```
+
+# 7 Build pangenome against B73
+
+```{r MaizePang}
+    tmp <- pangenome(gsParam = gparMaize, refGenome = "B73")
+```
+
+# 8 Make riparian plot
+
+Also, write the parameters to file
+
+```{r MaizeRip}
+plot_riparian(gsParam = gparMaize)
+save(gparMaize, file = file.path(baseDir, "gparMaize.rda"))
+```
+
+# 9 Print session info
+
+```{r sesh}
+sessionInfo()
+```

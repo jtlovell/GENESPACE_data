@@ -1,0 +1,322 @@
+---
+title: "GENESPACE MS part 1: Cotton analysis"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Table 1
+
+## Overview 
+
+The premise here is that the most precise and sensitive methods will produce the most orthogroups that contain a single copy of each gene (or representative gene for a tandem array) on each of the three genomes and each of the two subgenomes within each genomes. To accomplish this test, we parse the `gffWithOgs.txt.gz` files that `GENESPACE::synteny()` produces. This file is a simplified gff3 annotation with a number of additional data columns added on. See `GENESPACE::annotate_gff()` and `GENESPACE::synteny()` for more information. 
+
+## Script to build Table 1
+
+#### Read in the genespace parameter list from the primary script, keeping only cotton
+
+```{r load data 1}
+wd <- "/Users/lovell/Desktop/manuscripts/genespace_2022/GENESPACE_data/results"
+library(GENESPACE)
+library(ggplot2)
+load(file.path(wd, "gparCotton2x_outgroup.rda"))
+load(file.path(wd, "gparCotton4x_outgroup.rda"))
+gparCotton4x_outgroup <- gparCotton4x
+load(file.path(wd, "gparCotton2x.rda"))
+load(file.path(wd, "gparCotton4x.rda"))
+
+# -- get base directory names for each
+bn2x <- file.path(wd, "cotton_split")
+bn4x <- file.path(wd, "cotton4x")
+bn2x_outgroup <- file.path(wd, "cotton_split_outgroup")
+bn4x_outgroup <- file.path(wd, "cotton4x_outgroup")
+```
+
+#### Parse the gff-like annotations
+
+```{r parse gff}
+# -- Read in the gffs
+g4x <- fread(file.path(bn4x, "results", "gffWithOgs.txt.gz"))
+g2x <- fread(file.path(bn2x, "results", "gffWithOgs.txt.gz"))
+g4x_outgroup <- fread(file.path(bn4x_outgroup, "results", "gffWithOgs.txt.gz"))
+g2x_outgroup <- fread(file.path(bn2x_outgroup, "results", "gffWithOgs.txt.gz"))
+
+# -- combine (long format)
+g4x[,run := "4x"]
+g2x[,run := "2x"]
+g2x_outgroup[,run := "2x_outgroup"]
+g4x_outgroup[,run := "4x_outgroup"]
+gff <- rbind(g4x, g2x, g4x_outgroup, g2x_outgroup)
+gff <- subset(gff, genome != "Tcacao")
+
+# -- subset to non-scaffold and array rep genes
+gff <- subset(gff, !grepl("scaff", chr) & isArrayRep)
+
+# -- reformat chr IDs, splitting subgenome and chr numbers
+gff[,`:=`(chrn = as.numeric(substr(chr, 2, 3)), subg = substr(chr,1,1))]
+
+# -- subset to non chr2-5
+gff <- subset(gff, !chrn %in% 2:5)
+
+```
+
+#### Add in hierarchical orthogroups
+
+```{r}
+n0f_2x <- file.path(bn2x, "/orthofinder/Results_Feb12/Phylogenetic_Hierarchical_Orthogroups/N0.tsv")
+n0f_4x <- file.path(bn4x, "/orthofinder/Results_Feb13/Phylogenetic_Hierarchical_Orthogroups/N0.tsv")
+n0f_2x_outgroup <- file.path(bn2x_outgroup, "/orthofinder/Results_Feb22/Phylogenetic_Hierarchical_Orthogroups/N0.tsv")
+n0f_4x_outgroup <- file.path(bn4x_outgroup, "/orthofinder/Results_Feb22/Phylogenetic_Hierarchical_Orthogroups/N0.tsv")
+
+n0_2x <- melt(
+  fread(n0f_2x), 
+  id.vars = "HOG", measure.vars = gparCotton2x$genomes$genomeIDs,
+  value.name = "id", variable.name = "genome")
+n0_4x <- melt(
+  fread(n0f_4x), 
+  id.vars = "HOG", measure.vars = gparCotton4x$genomes$genomeIDs,
+  value.name = "id", variable.name = "genome")
+n0_2x_outgroup <- melt(
+  fread(n0f_2x_outgroup), 
+  id.vars = "HOG", measure.vars = gparCotton2x_outgroup$genomes$genomeIDs,
+  value.name = "id", variable.name = "genome")
+n0_4x_outgroup <- melt(
+  fread(n0f_4x_outgroup), 
+  id.vars = "HOG", measure.vars = gparCotton4x_outgroup$genomes$genomeIDs,
+  value.name = "id", variable.name = "genome")
+
+n0_2x <- n0_2x[,list(id = strsplit(id, ", ")[[1]]), by = c("HOG", "genome")]
+n0_4x <- n0_4x[,list(id = strsplit(id, ", ")[[1]]), by = c("HOG", "genome")]
+n0_2x_outgroup <- n0_2x_outgroup[,list(id = strsplit(id, ", ")[[1]]), by = c("HOG", "genome")]
+n0_4x_outgroup <- n0_4x_outgroup[,list(id = strsplit(id, ", ")[[1]]), by = c("HOG", "genome")]
+
+n0_4x[,run := "4x"]
+n0_2x[,run := "2x"]
+n0_2x_outgroup[,run := "2x_outgroup"]
+n0_4x_outgroup[,run := "4x_outgroup"]
+
+n0 <- rbind(n0_2x, n0_4x, n0_2x_outgroup, n0_4x_outgroup)
+gff <- merge(gff, n0, all.x = T, by = c("genome", "id", "run"))
+
+# -- strip off A/D genome classes in split run
+gff[,genome := gsub("A|D", "", genome)]
+
+# -- convert NAs to single-copy HOGs
+gff$HOG[is.na(gff$HOG)] <- 1:sum(is.na(gff$HOG))
+gff[,HOG := as.integer(as.factor(HOG))]
+```
+
+#### Count the 1x copy orthogroups
+
+```{r count ogs gff}
+# -- reformat to long
+m <- melt(
+  gff,
+  id.vars = c("ofID", "arrayID", "run", "chrn", "subg", "genome"),
+  measure.vars = c("globOG", "synOG", "og", "HOG"),
+  variable.name = "runType", value.name = "ogID")
+
+# -- count chrs, subgen, genomes, geneIDs for each run, OG type and OGID
+cnts <- m[,list(nChrns = uniqueN(chrn),
+                nSubg = uniqueN(subg),
+                nIDs = uniqueN(ofID),
+                nGenome = uniqueN(genome)),
+          by = c("ogID", "runType", "run")]
+
+# -- classify as single copy or not
+cnts[,is1x := nChrns == 1 & nSubg == 2, nIDs == 2]
+
+# -- count unique OGs that are single copy for each runType and OG
+cnt <- cnts[,list(uniqueN(ogID[is1x])),
+            by = c("runType","run")]
+```
+
+#### Make and print the table
+
+**Summary of orthogroup (‘OG’) inference for polyploids**. Orthofinder was run using default settings on three tetraploid inbred cotton genomes (represented as diploid assemblies) and six split subgenomes. Counts of single-copy orthogroups (more = better) are presented for nine cotton chromosomes.
+
+```{r print table 1}
+# -- reformat wide
+out <- dcast(cnt, runType ~ run, value.var = "V1")
+
+# -- calculate present better (spl over tetraploid)
+out[,percBetter := round(100*((`2x` - `4x`)/`2x`),1)]
+out[,percBetterOutgroup := round(100*((`2x_outgroup` - `4x_outgroup`)/`2x_outgroup`),1)]
+# -- print result
+knitr::kable(out)
+```
+
+# Table 2
+ 
+The premise here is that for the most part these cotton genomes are collinear and that the position on one subgenome corresponds exactly to a single syntenic position on the alternative subgenome. To test the sensitivity of syntenic block breakpoint calculation, we compare the proportion of the Pima cotton subgenomes in single-copy, multi-copy and absent. Higher % of single copy is better. 
+
+### Parse the syntenic block breakpoints text files. 
+
+```{r read synblks}
+# -- read in the hits and gff
+h <- fread(
+  file.path(gpar$paths$results, "Gbarbadense_Gbarbadense_synHits.txt.gz"), 
+  na.strings = c("NA", ""), showProgress = F)
+gff <- fread(file.path(gpar$paths$results, "gffWithOgs.txt.gz"),
+              na.strings = c("", "NA"))
+
+# -- subset to non-scaffold and get chr coords
+gff <- subset(gff, !grepl("scaff", chr) & genome == "Gbarbadense")
+
+# -- reformat chr IDs, splitting subgenome and chr numbers
+gff[,`:=`(chrn = as.numeric(substr(chr, 2, 3)), subg = substr(chr,1,1))]
+
+# -- subset to non chr2-5
+gff <- subset(gff, !chrn %in% 2:5)
+
+# -- get synteny parameters for just Pima cotton
+pimaSyn <- subset(gpar$params$synteny, genome1 == genome2 & genome1 == "Gbarbadense")
+idsA <- subset(gff, subg == "A")$ofID
+idsD <- subset(gff, subg == "D")$ofID
+pimaHits <- subset(h, ofID1 %in% idsA & ofID2 %in% idsD)
+pimaHits <- subset(pimaHits, substr(chr1, 2, 3) == substr(chr2, 2, 3))
+pimaHits[,u := paste(ofID1, ofID2)]
+```
+
+### Calculate the block breakpoints
+
+```{r calcBlks}
+# -- calculate block coordinates from raw hits
+tmp <- run_mcscanx(
+  gsParam = gpar,
+  hits = pimaHits, 
+  blkSize = pimaSyn$blkSize, 
+  nGaps = pimaSyn$nGaps, 
+  path2mcscanx = gpar$paths$mcscanxCall)
+rawMcs <- subset(pimaHits, u %in% names(tmp))
+rawMcs[,blkID := tmp[u]]
+rawMcs <- calc_blkCoords(rawMcs)
+
+# -- calculate block coordinates from collinear array reps
+tmp <- run_mcscanx(
+  gsParam = gpar,
+  hits = subset(pimaHits, isRep1 & isRep2), 
+  blkSize = pimaSyn$blkSize, 
+  nGaps = pimaSyn$nGaps, 
+  path2mcscanx = gpar$paths$mcscanxCall)
+repMcs <- subset(pimaHits, u %in% names(tmp))
+repMcs[,blkID := tmp[u]]
+repMcs <- calc_blkCoords(repMcs)
+
+# -- calculate block coordinates from only hits in the same orthogroup
+tmp <- run_mcscanx(
+  gsParam = gpar,
+  hits = subset(pimaHits, isOg), 
+  blkSize = pimaSyn$blkSize, 
+  nGaps = pimaSyn$nGaps, 
+  path2mcscanx = gpar$paths$mcscanxCall)
+ogMcs <- subset(pimaHits, u %in% names(tmp))
+ogMcs[,blkID := tmp[u]]
+ogMcs <- calc_blkCoords(ogMcs)
+
+# -- pull corresponding syntenic block coords from genespace run
+gsBlks <- subset(pimaHits, !is.na(blkID) & isAnchor)
+gsBlks <- calc_blkCoords(gsBlks)
+
+# -- reformat blks into single window
+gsb <- rbind(
+  with(rawMcs, data.table(
+    chr = chr1, start = startBp1, 
+    end = endBp1, blkID = paste0(blkID, "_A"), type = "mcs_raw")),
+  with(rawMcs, data.table(
+    chr = chr2, start = minBp2, 
+    end = maxBp2, blkID = paste0(blkID, "_D"), type = "mcs_raw")),
+  with(repMcs, data.table(
+    chr = chr1, start = startBp1, 
+    end = endBp1, blkID = paste0(blkID, "_A"), type = "mcs_rep")),
+  with(repMcs, data.table(
+    chr = chr2, start = minBp2, 
+    end = maxBp2, blkID = paste0(blkID, "_D"), type = "mcs_rep")),
+  with(ogMcs, data.table(
+    chr = chr1, start = startBp1, 
+    end = endBp1, blkID = paste0(blkID, "_A"), type = "mcs_og")),
+  with(ogMcs, data.table(
+    chr = chr2, start = minBp2, 
+    end = maxBp2, blkID = paste0(blkID, "_D"), type = "mcs_og")),
+  with(gsBlks, data.table(
+    chr = chr1, start = startBp1, 
+    end = endBp1, blkID = paste0(blkID, "_A"), type = "gs")),
+  with(gsBlks, data.table(
+    chr = chr2, start = minBp2, 
+    end = maxBp2, blkID = paste0(blkID, "_D"), type = "gs")))
+setkey(gsb, chr, start, end)
+```
+
+### Make a 10kb-spaced grid on each genome and pull overlaps
+
+```{r make grid}
+# -- make 10kb grid for genic region of chrs
+tmp <- subset(gff, ofID %in% c(pimaHits$ofID1, pimaHits$ofID2))
+chrCoords <- tmp[,list(start = min(start), end = max(end)), by = "chr"]
+wind <- 1e4
+grd <- chrCoords[,list(
+  start = seq(from = start + (wind/2), to = end - (wind/2), by = wind)), 
+  by = "chr"]
+grd[,`:=`(end = start, grdID = 1:.N)]
+setkey(grd, chr, start, end)
+
+# -- calculate overlaps
+ovlps <- foverlaps(grd, gsb)
+```
+
+### Count the number of hits for each member of the grid
+
+
+```{r count hits}
+# -- count overlaps by grid
+cnts <- ovlps[,list(n = uniqueN(blkID[!is.na(blkID)])), by = c("type", "grdID")]
+cnts <- dcast(cnts, grdID ~ type, value.var = "n")
+cnts[,`NA` := NULL]
+cnts[is.na(cnts)] <- 0
+cnts <- melt(cnts, id.vars = "grdID", value.name = "n", variable.name = "runType")
+cnts[,cat := ifelse(n > 1, "2+", as.character(n))]
+sumCnts <- cnts[,list(n = .N), by = c("runType", "cat")]
+sumCnts[,perc := round((n/sum(n)) * 100, 1), by = "runType"]
+```
+
+### Print the table
+
+```{r print table 2}
+# -- reformat wide
+sumCnts[,runType := factor(runType, levels = c("mcs_raw", "mcs_rep", "mcs_og", "gs"))]
+out <- dcast(sumCnts, runType ~ cat, value.var = "perc")
+
+# -- print result
+knitr::kable(out)
+```
+
+
+**Table 2 | Summary of syntenic block inference between G. barbadense subgenomes.** MCScanX_h was run for each subset of blast-like diamond2 (--more-sensitive) hits and the copy number of each non-overlapping 1kb genomic interval was tabulated from the start/end coordinates of the unique blocks from the collinearity file. The percent of 1kb intervals that are never found within a block (absent), found within exactly one block (single-copy) or in more than one block (multi-copy) are reported. Following Table 1, chromosomes 2-5 are excluded due to the presence of within-sub-genome translocations.
+
+
+# Riparian plot of all cottons, split by subgenomes
+
+**NOTE** Illustrator edits: modified genome ids to species. Captilized subgenome specifier on chrs and removed subgenome ids on genomes. Increased scale bar to 5000 genes. Removed black background. 
+
+```{r rip}
+plot_riparianHits(
+  gsParam = gspl, useOrder = T, useBlks = T,
+  genomeIDs = rev(gspl$genomes$genomeIDs),
+  labelTheseGenomes = c("GbarbadenseA", "GbarbadenseD"),
+  refChrCols = c("grey60", RColorBrewer::brewer.pal(n = 12, name = "Paired")))
+
+#-- make another to write to file
+# pdf("/Users/lovell/Desktop/manuscripts/genespace_2022/figures/FigS2_cottonRiparian_sourcePlot.pdf", height = 6, width = 10)
+# plot_riparianHits(
+#   gsParam = gspl, useOrder = T, useBlks = T, 
+#   genomeIDs = rev(gspl$genomes$genomeIDs), 
+#   labelTheseGenomes = c("GbarbadenseA", "GbarbadenseD"),
+#   refChrCols = c("grey60", RColorBrewer::brewer.pal(n = 12, name = "Paired")))
+# dev.off()
+```
+
+

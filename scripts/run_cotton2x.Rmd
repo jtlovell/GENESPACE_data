@@ -1,0 +1,119 @@
+---
+title: "Run GENESPACE vignettes - Cotton genomes treated as tetraploids"
+author: "JTLovell"
+date: "3-Feb 2022"
+output: pdf_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GENESPACE)
+```
+
+# 1. Global Parameters
+
+```{r globParam}
+baseDir <- "/Users/jlovell/Desktop/GENESPACE_data/results/"
+rawAnnotationDir <- "/Users/jlovell/Desktop/GENESPACE_data"
+mcscanDir <- "/Users/jlovell/Documents/comparative_genomics/programs/MCScanX"
+nThreads <- 6
+path2of <- "orthofinder" # since orthofinder is in the path via conda
+```
+
+
+# 2. Set parameters
+
+**NOTE**: Wheat, Maize and Switchgrass WGD occurred after MRCA of all genomes below. Therefore, treat them as polyploid.
+
+Since some ploidy > 1, run orthofinder again in syntenic blocks. 
+
+```{r cottParam}
+cottonSplit <- list(
+  wd = file.path(baseDir, "cotton_split"),
+  speciesIDs = "cotton",
+  genomes = data.table(do.call("rbind", list(
+    c(genome = "GbarbadenseA", version = "Gbarbadense", ploidy = 1),
+    c("GdarwiniiA", "Gdarwinii", 1),
+    c("GtomentosumA", "Gtomentosum", 1),
+    c("GbarbadenseD", "Gbarbadense", 1),
+    c("GdarwiniiD", "Gdarwinii", 1),
+    c("GtomentosumD", "Gtomentosum", 1)))))
+
+cottonParams <- list(
+  pepString = "fa",
+  orthofinderInBlk = T,
+  blkSize = 10,
+  nGaps = 10)
+```
+
+# 3 Initialize the cotton run with the above specified parameters
+
+```{r initcott}
+gparCotton2x <- with(cottonSplit, init_genespace(
+  genomeIDs = genomes$genome,
+  versionIDs = genomes$version,
+  ploidy = genomes$ploidy,
+  speciesIDs = rep(speciesIDs, length(genomes$genome)),
+  orthofinderInBlk = TRUE,
+  pepString = "fa",
+  wd = wd,
+  nCores = nThreads,
+  path2orthofinder = path2of,
+  path2mcscanx = mcscanDir,
+  rawGenomeDir = rawAnnotationDir))
+```
+
+# 4 Parse the raw annotations. 
+
+Parse full annotations
+
+```{r cottAnnot}
+parse_phytozome(gsParam = gparCotton2x)
+```
+
+Split into subgenomes
+
+```{r spli}
+chk <- lapply(names(gparCotton2x$paths$gff[1:3]), function(i){
+  g <- subset(fread(gparCotton2x$paths$gff[i]), grepl("^A", chr))
+  p <- Biostrings::readAAStringSet(gparCotton2x$paths$peptide[i])[g$id]
+  fwrite(g, file = gparCotton2x$paths$gff[i], sep = "\t", quote = F)
+  Biostrings::writeXStringSet(p, filepath = gparCotton2x$paths$peptide[i])
+})
+chk <- lapply(names(gparCotton2x$paths$gff[4:6]), function(i){
+  g <- subset(fread(gparCotton2x$paths$gff[i]), grepl("^D", chr))
+  p <- Biostrings::readAAStringSet(gparCotton2x$paths$peptide[i])[g$id]
+  fwrite(g, file = gparCotton2x$paths$gff[i], sep = "\t", quote = F)
+  Biostrings::writeXStringSet(p, filepath = gparCotton2x$paths$peptide[i])
+})
+```
+
+# 5 Get orthofinder results
+
+```{r copyOver}
+gparCotton2x <- set_syntenyParams(gsParam = gparCotton2x)
+gparCotton2x <- run_orthofinder(gsParam = gparCotton2x)
+```
+
+Also set the synteny parameters as default. 
+
+```{r cottOf}
+gparCotton2x <- set_syntenyParams(
+  gsParam = gparCotton2x,   
+  blkSize = 10,
+  nGaps = 10)
+```
+
+# 6 Build synteny data
+
+```{r cottSyn}
+gparCotton2x <- find_orthofinderResults(gsParam = gparCotton2x)
+gparCotton2x <- synteny(gsParam = gparCotton2x, overwrite = T)
+```
+
+# 7 Print session info
+
+```{r sesh}
+save(gparCotton2x, file = file.path(baseDir, "gparCotton2x.rda"))
+sessionInfo()
+```

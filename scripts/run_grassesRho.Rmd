@@ -1,0 +1,120 @@
+---
+title: "Run GENESPACE vignettes - Rho duplication of grasses"
+author: "JTLovell"
+date: "13-Feb 2022"
+output: pdf_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GENESPACE)
+```
+
+# 1. Global Parameters
+
+```{r globParam}
+baseDir <- "/Users/jlovell/Desktop/GENESPACE_data/results/"
+rawAnnotationDir <- "/Users/jlovell/Desktop/GENESPACE_data"
+mcscanDir <- "/Users/jlovell/Documents/comparative_genomics/programs/MCScanX"
+nThreads <- 6
+path2of <- "orthofinder" # since orthofinder is in the path via conda
+```
+
+
+# 2. Set parameters
+
+**NOTE**: Wheat, Maize and Switchgrass WGD occurred after MRCA of all genomes below. Therefore, treat them as polyploid.
+
+Since some ploidy > 1, run orthofinder again in syntenic blocks. 
+
+```{r rhoParam}
+rho <- list(
+  wd = file.path(baseDir, "rho"),
+  speciesIDs = "grasses",
+  genomes = data.table(do.call("rbind", list(
+    c(genome = "Phallii", version = "Phallii_HAL2_v2.1", ploidy = 1),
+    c("switchgrass", "switchgrass_v5.1", 2),
+    c("Sviridis", "Sviridis_v2.1", 1),
+    c("Sorghum", "Sbicolor_BTx623_v3.1", 1),
+    c("maize", "maize_refgen_v5", 2),
+    c("rice", "rice_kitaake_v3.1", 1),
+    c("brachy", "Bdistachyon_v3.1", 1),
+    c("wheat", "wheat_v4.0", 3)))))
+
+rhoParams <- list(
+  orthofinderInBlk = T,
+  pepString = "fa",
+  nSecondHits = 2, # look for one additional hit after masking primary synteny
+  nGapsSecond = 10, # relax mcscan -m parameter
+  onlyOgAnchorsSecond = F) # initial secondary syntenic regions defined w/o requiring hits to be in the same orthogroup
+
+```
+
+# 3 Initialize the rho run with the above specified parameters
+
+```{r initrho}
+gparRho <- with(rho, init_genespace(
+  genomeIDs = genomes$genome,
+  versionIDs = genomes$version,
+  ploidy = genomes$ploidy,
+  speciesIDs = rep(speciesIDs, length(genomes$genome)),
+  orthofinderInBlk = rhoParams$orthofinderInBlk,
+  pepString = rhoParams$pepString,
+  wd = wd,
+  nCores = nThreads,
+  path2orthofinder = path2of,
+  path2mcscanx = mcscanDir,
+  rawGenomeDir = rawAnnotationDir))
+```
+
+# 4 Parse the raw annotations. 
+
+This is a good example of the flexibility of GENESPACE annotation parsing. The maize genome is from NCBI, the wheat from an independent server with different gff specifications, and the rest from phytozome.
+
+```{r rhoAnnot}
+parse_ncbi(gsParam = gparRho, genomeIDs = "maize")
+parse_phytozome(
+  gsParam = gparRho,
+  genomeIDs = c("Phallii","switchgrass","Sviridis","Sorghum","rice", "brachy"))
+parse_annotations(
+  gsParam = gparRho, genomeIDs = "wheat", gffEntryType = "gene",
+  gffIdColumn = "ID", headerEntryIndex = 2, headerSep = "locus_tag=",
+  headerStripText = "].*", gffStripText = "gene-")
+```
+
+# 5 Get orthofinder results
+
+Since they already have been created, just use the orthofinder run from the 
+previous grass run. 
+
+```{r copyOver}
+load(file.path(baseDir, "gparGrasses.rda"))
+file.copy(from = gparGrasses$paths$orthofinder, 
+          to = dirname(gparRho$paths$orthofinder),
+          recursive = T)
+rm(list = "gparGrasses")
+```
+
+Also set the synteny parameters as default. 
+
+```{r rhoOf}
+gparRho <- with(rhoParams, set_syntenyParams(
+  gsParam = gparRho,   
+  nSecondHits = nSecondHits, # look for one additional hit after masking primary synteny
+  nGapsSecond = nGapsSecond, # relax mcscan -m parameter
+  onlyOgAnchorsSecond = onlyOgAnchorsSecond))
+```
+
+# 6 Build synteny data
+
+```{r rhoSyn}
+gparRho <- find_orthofinderResults(gsParam = gparRho)
+gparRho <- synteny(gsParam = gparRho, overwrite = T)
+```
+
+# 7 Print session info
+
+```{r sesh}
+save(gparRho, file = file.path(baseDir, "gparRho.rda"))
+sessionInfo()
+```

@@ -1,0 +1,112 @@
+---
+title: "Run GENESPACE vignette - grasses"
+author: "JTLovell"
+date: "11-Feb 2022"
+output: pdf_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GENESPACE)
+```
+
+# 1. Global Parameters
+
+```{r globParam}
+baseDir <- "/Users/jlovell/Desktop/GENESPACE_data/results/"
+rawAnnotationDir <- "/Users/jlovell/Desktop/GENESPACE_data"
+mcscanDir <- "/Users/jlovell/Documents/comparative_genomics/programs/MCScanX"
+nThreads <- 4
+path2of <- "orthofinder" # since orthofinder is in the path via conda
+```
+
+# 2. Set parameters
+
+**NOTE**: Wheat, Maize and Switchgrass WGD occurred after MRCA of all genomes below. Therefore, treat them as polyploid.
+
+Since some ploidy > 1, run orthofinder again in syntenic blocks. 
+
+```{r grassesParam}
+grasses <- list(
+  wd = file.path(baseDir, "grasses"),
+  speciesIDs = "grasses",
+  genomes = data.table(do.call("rbind", list(
+    c(genome = "Phallii", version = "Phallii_HAL2_v2.1", ploidy = 1),
+    c("switchgrass", "switchgrass_v5.1", 2),
+    c("Sviridis", "Sviridis_v2.1", 1),
+    c("Sorghum", "Sbicolor_BTx623_v3.1", 1),
+    c("maize", "maize_refgen_v5", 2),
+    c("rice", "rice_kitaake_v3.1", 1),
+    c("brachy", "Bdistachyon_v3.1", 1),
+    c("wheat", "wheat_v4.0", 3)))))
+
+grassesParams <- list(
+  orthofinderInBlk = T, # Recommended when any genome has ploidy > 1. 
+  pepString = "fa") # specify the file name search string for peptide fastas
+```
+
+# 3 Initialize the grasses run with the above specified parameters
+
+```{r initGrasses}
+gparGrasses <- with(grasses, init_genespace(
+  genomeIDs = genomes$genome,
+  versionIDs = genomes$version,
+  ploidy = genomes$ploidy,
+  speciesIDs = rep(speciesIDs, length(genomes$genome)),
+  orthofinderInBlk = grassesParams$orthofinderInBlk,
+  pepString = grassesParams$pepString,
+  wd = wd,
+  nCores = nThreads,
+  path2orthofinder = path2of,
+  path2mcscanx = mcscanDir,
+  rawGenomeDir = rawAnnotationDir))
+```
+
+# 4 Parse the raw annotations. 
+
+This is a good example of the flexibility of GENESPACE annotation parsing. The maize genome is from NCBI, the wheat from an independent server with different gff specifications, and the rest from phytozome.
+
+```{r grassAnnot}
+parse_ncbi(gsParam = gparGrasses, genomeIDs = "maize")
+parse_phytozome(
+  gsParam = gparGrasses,
+  genomeIDs = c("Phallii","switchgrass","Sviridis","Sorghum","rice", "brachy"))
+parse_annotations(
+  gsParam = gparGrasses, genomeIDs = "wheat", gffEntryType = "gene",
+  gffIdColumn = "ID", headerEntryIndex = 2, headerSep = "locus_tag=",
+  headerStripText = "].*", gffStripText = "gene-")
+```
+
+# 5 Run OrthoFinder from within R. 
+
+Also set the synteny parameters as default. 
+
+```{r grassOf}
+gparGrasses <- set_syntenyParams(gsParam = gparGrasses)
+gparGrasses <- run_orthofinder(gsParam = gparGrasses)
+```
+
+# 6 Build synteny data
+
+```{r grassSyn}
+gparGrasses <- find_orthofinderResults(gsParam = gparGrasses)
+gparGrasses <- synteny(gsParam = gparGrasses, overwrite = T)
+```
+
+# 7 Build pangenomes against each genome
+
+```{r grassesPang}
+for(i in gparGrasses$genomes$genomeIDs)
+  tmp <- pangenome(gsParam = gparGrasses, refGenome = i)
+```
+
+# 8 Make riparian plot
+
+Also, write the parameters to file
+
+```{r grassesRip}
+plot_riparianHits(gsParam = gparGrasses)
+save(gparGrasses, file = file.path(baseDir, "gparGrasses.rda"))
+```
+
+

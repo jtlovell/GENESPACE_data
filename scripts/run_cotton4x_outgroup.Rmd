@@ -1,0 +1,100 @@
+---
+title: "Run GENESPACE vignettes - Cotton genomes treated as tetraploids"
+author: "JTLovell"
+date: "22-Feb 2022"
+output: pdf_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GENESPACE)
+```
+
+# 1. Global Parameters
+
+```{r globParam}
+baseDir <- "/Users/jlovell/Desktop/GENESPACE_data/results/"
+rawAnnotationDir <- "/Users/jlovell/Desktop/GENESPACE_data"
+mcscanDir <- "/Users/jlovell/Documents/comparative_genomics/programs/MCScanX"
+nThreads <- 6
+path2of <- "orthofinder" # since orthofinder is in the path via conda
+```
+
+
+# 2. Set parameters
+
+**NOTE**: Wheat, Maize and Switchgrass WGD occurred after MRCA of all genomes below. Therefore, treat them as polyploid.
+
+Since some ploidy > 1, run orthofinder again in syntenic blocks. 
+
+```{r rhoParam}
+cotton <- list(
+  wd = file.path(baseDir, "cotton4x_outgroup"),
+  speciesIDs = "cotton",
+  genomes = data.table(do.call("rbind", list(
+    c(genome = "Gbarbadense", version = "Gbarbadense", ploidy = 2),
+    c("Gdarwinii", "Gdarwinii", 2),
+    c("Gtomentosum", "Gtomentosum", 2),
+    c("Tcacao", "Tcacao_v2.1", 1)))))
+
+cottonParams <- list(
+  pepString = "fa",
+  orthofinderInBlk = T,
+  blkSize = 10,
+  nGaps = 10)
+```
+
+# 3 Initialize the rho run with the above specified parameters
+
+```{r initrho}
+gparCotton4x <- with(cotton, init_genespace(
+  genomeIDs = genomes$genome,
+  versionIDs = genomes$version,
+  ploidy = genomes$ploidy,
+  outgroup = "Tcacao",
+  speciesIDs = rep(speciesIDs, length(genomes$genome)),
+  orthofinderInBlk = TRUE,
+  pepString = "fa",
+  wd = wd,
+  nCores = nThreads,
+  path2orthofinder = path2of,
+  path2mcscanx = mcscanDir,
+  rawGenomeDir = rawAnnotationDir))
+```
+
+# 4 Parse the raw annotations. 
+
+```{r rhoAnnot}
+parse_phytozome(gsParam = gparCotton4x)
+```
+
+# 5 Get orthofinder results
+
+```{r copyOver}
+gparCotton4x <- set_syntenyParams(gsParam = gparCotton4x)
+gparCotton4x <- run_orthofinder(gsParam = gparCotton4x)
+```
+
+Also set the synteny parameters as default. 
+
+```{r rhoOf}
+gparCotton4x <- set_syntenyParams(
+  gsParam = gparCotton4x,   
+  blkSize = 10,
+  nGaps = 10)
+```
+
+# 6 Build synteny data
+
+```{r rhoSyn}
+gparCotton4x <- find_orthofinderResults(gsParam = gparCotton4x)
+gparCotton4x <- synteny(gsParam = gparCotton4x, overwrite = T)
+```
+
+# 7 Print session info
+
+```{r sesh}
+gparCotton4x_outgroup <- gparCotton4x
+save(gparCotton4x, file = file.path(baseDir, "gparCotton4x_outgroup.rda"))
+sessionInfo()
+```

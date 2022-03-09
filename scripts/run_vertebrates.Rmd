@@ -1,0 +1,113 @@
+---
+title: "Run GENESPACE vignettes- 17 Vertebrate genomes"
+author: "JTLovell"
+date: "12-Feb 2022"
+output: pdf_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GENESPACE)
+```
+
+# 1. Global Parameters
+
+```{r globParam}
+baseDir <- "/Users/jlovell/Desktop/GENESPACE_data/results/"
+rawAnnotationDir <- "/Users/jlovell/Desktop/GENESPACE_data"
+mcscanDir <- "/Users/jlovell/Documents/comparative_genomics/programs/MCScanX"
+nThreads <- 6
+path2of <- "orthofinder" # since orthofinder is in the path via conda
+```
+
+
+# 2. Set parameters
+
+```{r VertsParam}
+vertebrates <- list(
+  wd = file.path(baseDir, "vertebrates"),
+  speciesIDs = "vertebrates",
+  genomes = data.table(do.call("rbind", list(
+    # lizards
+    c(genome = "garterSnake", version = "Thamnophis_elegans_rThaEle1.pri", ploidy = 1),
+    c("sandLizard", "Lacerta_agilis_rLacAgi1.pri", 1),
+    # birds
+    c("chicken", "Gallus_gallus_bGalGal1.mat.broiler.GRCg7b", 1),
+    c("hummingbird", "Calypte_anna_bCalAnn1_v1.p", 1),
+    c("budgie", "Melopsittacus_undulatus_bMelUnd1.mat.Z", 1),
+    c("swan", "Cygnus_olor_bCygOlo1.pri.v2", 1),
+    c("zebrafinch", "Taeniopygia_guttata_bTaeGut1.4.pri", 1),
+    # placental mammals
+    c("human", "Homo_sapiens_GRCh38.p13", 1),
+    c("mouse", "Mus_musculus_GRCm39", 1),
+    c("sloth", "Choloepus_didactylus_mChoDid1.pri", 1),
+    c("horseshoeBat", "Rhinolophus_ferrumequinum_mRhiFer1_v1.p", 1),
+    c("dolphin", "Tursiops_truncatus_mTurTru1.mat.Y", 1),
+    # non-placentals
+    c("echidna", "Tachyglossus_aculeatus_mTacAcu1.pri", 1),
+    c("platypus", "Ornithorhynchus_anatinus_mOrnAna1.pri.v4", 1),
+    c("brushtailPossum", "Trichosurus_vulpecula_mTriVul1.pri", 1),
+    c("opossum", "Monodelphis_domestica_MonDom5", 1),
+    c("tasmaniandevil", "Sarcophilus_harrisii_mSarHar1.11", 1)))))
+```
+
+# 3 Initialize the Verts run with the above specified parameters
+
+```{r initVerts}
+gparVerts <- with(vertebrates, init_genespace(
+  genomeIDs = genomes$genome,
+  versionIDs = genomes$version,
+  ploidy = genomes$ploidy,
+  speciesIDs = rep(speciesIDs, length(genomes$genome)),
+  pepString = "translated_cds",
+  wd = wd,
+  nCores = nThreads,
+  path2orthofinder = path2of,
+  path2mcscanx = mcscanDir,
+  rawGenomeDir = rawAnnotationDir))
+```
+
+# 4 Parse the raw annotations. 
+
+Here, we need to specify some custom fields to get the right output. Also, for simplicity, we'll drop any chromosomes with the string "alt", as the ploidy in these regions is known to be > 1. 
+```{r VertsAnnot}
+parse_ncbi(gsParam = gparVerts)
+```
+
+# 5 Run OrthoFinder from within R. 
+
+Also set the synteny parameters as default. 
+
+```{r VertsOf}
+gparVerts <- set_syntenyParams(gsParam = gparVerts)
+gparVerts <- run_orthofinder(gsParam = gparVerts)
+```
+
+# 6 Build synteny data
+
+```{r VertsSyn}
+gparVerts <- find_orthofinderResults(gsParam = gparVerts)
+gparVerts <- synteny(gsParam = gparVerts)
+```
+
+# 7 Build pangenomes against each genome
+
+```{r VertsPang}
+humanPg <- pangenome(gsParam = gparVerts, refGenome = "human")
+chickPg <- pangenome(gsParam = gparVerts, refGenome = "chicken")
+```
+
+# 8 Make riparian plot
+
+Also, write the parameters to file
+
+```{r VertsRip}
+plot_riparian(gsParam = gparVerts)
+save(gparVerts, file = file.path(baseDir, "gparVerts.rda"))
+```
+
+# 9 Print session info
+
+```{r sesh}
+sessionInfo()
+```

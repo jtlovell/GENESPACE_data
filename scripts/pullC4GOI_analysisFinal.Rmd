@@ -1,0 +1,241 @@
+---
+title: "GENESPACE MS part 1: Cotton analysis"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Get dictionary of gene IDs between Maize versions
+
+The geneIDs on NCBI for refgen_v5 are different than those for the B73 nam founder. Further, the QTL we want to explore comes from the v5 annotation. We need to get a geneID dictionary across these different versions. 
+
+To do this, we ran orthofinder on the two pairs (v2 v5) and (v5 ncbi vs. v5 nam) and extracted 1:1 orthologs. 
+
+```{r orthologs}
+wd <- "/Users/lovell/Desktop/manuscripts/genespace_2022/GENESPACE_data/"
+
+# -- function to parse a single orthofinder ortholog file
+parse_orthos <- function(i){
+  x <- fread(i, showProgress = F)
+  refID <- colnames(x)[2]
+  altID <- colnames(x)[3]
+  setnames(x, c("og", "id1", "id2"))
+  id1 <- id2 <- NULL
+  x1 <- subset(x, !grepl(",", paste(id1, id2)))
+  x2 <- subset(x, grepl(",", paste(id1, id2)))
+  x2[,orthID := 1:.N]
+  x2r <- x2[,list(id1 = unique(strsplit(id1, ",")[[1]])),
+            by = "orthID"]
+  x2a <- x2[,list(id2 = unique(strsplit(id2, ",")[[1]])),
+            by = "orthID"]
+  x2 <- merge(x2r, x2a, by = "orthID", all = T, allow.cartesian = T)
+  x1[,orthID := (1:.N)+max(x2$orthID)]
+  x <- rbind(x1[,colnames(x2), with = F], x2)
+  x[,`:=`(gen1 = refID, gen2 = altID,
+          id1 = gsub(" ", "", id1), id2 = gsub(" ", "", id2))]
+  return(x)
+}
+
+# -- read all the orthologs into memory
+dict <- rbind(
+  parse_orthos(file.path(wd, "v2__v__v5.tsv")),
+  parse_orthos(file.path(wd, "v5__v__v2.tsv")),
+  parse_orthos(file.path(wd, "nam__v__ncbi.tsv")),
+  parse_orthos(file.path(wd, "ncbi__v__nam.tsv")))
+
+# -- count unique geneIDs by ortholog group and genome
+dict[,n1 := uniqueN(id1), by = c("orthID", "gen1")]
+dict[,n2 := uniqueN(id2), by = c("orthID", "gen2")]
+fwrite(dict, file = file.path(wd, "results", "maizeVersionDict.txt.gz"), sep = "\t", quote = F)
+# -- subset to just 1:1 graphs
+dict121 <- subset(
+  dict, 
+  orthID %in% unique(subset(dict, n1 == 1 & n2 == 1)$orthID))
+dict121 <- dict121[,c("id1", "id2", "gen1", "gen2")]
+```
+
+
+
+## Lift genes of interest onto the ncbi version (used in the full grass run)
+
+Specify lists of genes as vectors
+
+```{r readGOIs}
+zmaysCore <- c('GRMZM2G129513', 'GRMZM2G085019', 'GRMZM2G083841', 'GRMZM2G306345', 'GRMZM2G131286', 'GRMZM2G097457', 'GRMZM2G121878', 'GRMZM2G001696', 'GRMZM5G870932')
+zmaysRelated <- c('GRMZM5G836910','GRMZM2G069203','GRMZM2G070271','GRMZM2G095562','GRMZM2G040878','GRMZM2G350802','GRMZM2G171406','GRMZM2G120652','GRMZM2G021706','GRMZM2G173669','AC207628.4_FG009','GRMZM2G080274','GRMZM2G004534','GRMZM2G080375','GRMZM5G857641','GRMZM2G039246','GRMZM5G852502','AC233887.1_FG006','GRMZM2G074462','GRMZM2G052546','GRMZM2G082034','GRMZM2G007939','GRMZM2G035749','GRMZM2G347708','GRMZM2G121612','GRMZM2G075502','GRMZM5G822137','GRMZM2G099340','GRMZM2G004528','GRMZM2G047592','GRMZM2G150906','GRMZM2G048904','AC212023.4_FG004','GRMZM2G414317','GRMZM2G091825','GRMZM2G312910','GRMZM2G078118','GRMZM2G178775','GRMZM2G344205','GRMZM2G056093','GRMZM2G004880','GRMZM2G033971','GRMZM2G181000','GRMZM2G412229','GRMZM5G863645','GRMZM2G326270','GRMZM2G440459','GRMZM2G066636','GRMZM2G047002','GRMZM2G135990','GRMZM2G367638','GRMZM2G162233','GRMZM2G075058','GRMZM2G030240','GRMZM2G032478','GRMZM2G004006','GRMZM2G140917','GRMZM2G039978','GRMZM2G034963','GRMZM2G338721','GRMZM2G167892','GRMZM2G060079','GRMZM2G161295','GRMZM2G005859','GRMZM2G081114','GRMZM2G098545','GRMZM2G098999','GRMZM2G322593','GRMZM2G111200','GRMZM2G341366','GRMZM2G038487','GRMZM2G030628','GRMZM2G178192','GRMZM2G017532','GRMZM2G179133','AC233922.1_FG008','GRMZM2G176506','GRMZM2G051103','GRMZM2G055575','GRMZM2G021416','GRMZM2G052658','GRMZM2G070315','AC233910.1_FG010','GRMZM2G134389','GRMZM2G171390','GRMZM2G046284','GRMZM2G306732','AC147602.5_FG004','GRMZM2G070605','GRMZM2G066413','GRMZM2G102349','GRMZM5G885392','GRMZM2G110277','GRMZM2G103101','GRMZM2G010884','GRMZM2G017290','GRMZM2G085646','GRMZM2G013342','GRMZM2G024150','GRMZM2G122793','GRMZM2G116557','GRMZM2G338259','GRMZM2G052544','GRMZM2G088524','AC204212.4_FG001','GRMZM2G144196','GRMZM2G084935','GRMZM2G066489','GRMZM2G353024','GRMZM2G080503','GRMZM2G068316','GRMZM2G324956','GRMZM2G113325','GRMZM2G137849','GRMZM5G890665','GRMZM2G026391','GRMZM2G009715','GRMZM2G310569','GRMZM5G801949','GRMZM2G034302','GRMZM2G087901','GRMZM2G096365')
+zmaysAll <-  unique(c(zmaysCore, zmaysRelated))
+```
+
+Subset the 1:1 ortholog dictionary to these genes
+
+```{r subset ogs}
+tmp <- subset(dict121, id2 %in% zmaysAll)
+dictGOI <- subset(dict121, id1 %in% c(tmp$id1, tmp$id2))
+uGOI <- unique(c(dictGOI$id1, dictGOI$id2))
+```
+
+```{r add ofIDs}
+gff <- fread(
+  file.path(wd, "results/grasses/results", "gffWithOgs.txt.gz"),
+  showProgress = F, na.strings = c("", "NA"))
+gffGOI <- subset(gff, id %in% uGOI)
+uGOI <- gffGOI$id
+idv <- gffGOI$ofID; names(idv) <- gffGOI$id
+odv <- gffGOI$id; names(odv) <- gffGOI$ofID
+dictGOI[,`:=`(ofID1 = idv[id1], ofID2 = idv[id2])]
+uofGOI <- unique(c(dictGOI$ofID1, dictGOI$ofID2))
+uofGOI <- uofGOI[!is.na(uofGOI)]
+```
+
+
+Check and drop paralogs in this list so we just have single copies
+
+```{r chk para}
+hits <- fread(
+  file.path(wd, "results/grasses/results", "maize_maize_synHits.txt.gz"),
+  showProgress = F, na.strings = c("", "NA"))
+hits <- subset(hits, isOg & inBuffer)
+hitsGOI <- subset(hits, ofID1 %in% uofGOI & ofID2 %in% uofGOI & ofID1 != ofID2)
+paraGOI <- with(hitsGOI, data.table(id = odv[ofID1], paralog = odv[ofID2], blk = blkID))
+paraGOI[,clus := clus_igraph(id, paralog)]
+
+noDupGOI <- c(unique(paraGOI$id[!duplicated(paraGOI$clus)]), 
+              uGOI[!uGOI %in% unique(c(paraGOI$id, paraGOI$paralog))])
+```
+
+Read in the pangenome and subset to goi
+
+```{r subset ogs}
+pg <- fread(
+  file.path(wd, "results/grasses/results", "maize_pangenomeDB.txt.gz"),
+  showProgress = F, na.strings = c("", "NA"))
+pg <- subset(pg, !is.na(pgChr))
+setkey(pg, pgChr, pgOrd)
+pg[,u := paste(pgChr, pgOrd, pgID)]
+pg[,pgID := as.numeric(factor(u, levels = unique(u)))]
+tmp <- subset(pg, id %in% noDupGOI & isArrayRep & isDirectSyn)
+pgGOI <- subset(pg, pgID %in% tmp$pgID)
+pgGOI <- subset(pgGOI, !duplicated(paste(pgID, id)))
+fwrite(pgGOI, file = file.path(wd, "results", "maizeGOIpangenome.txt"), sep = "\t", quote = F)
+```
+
+Transform to wide format and write 
+
+```{r widepg}
+transf_toWide <- function(pgout){
+  wh <- which(pgout$isNSOrtho)
+  pgout$id[wh] <- paste0(pgout$id[wh], "*")
+  
+  # -- flag array reps
+  wh <- which(!pgout$isArrayRep & !pgout$isNSOrtho)
+  pgout$id[wh] <- paste0(pgout$id[wh], "+")
+  
+  # -- reshape to wide format
+  pgw <- dcast(
+    pgout,
+    pgID + pgChr + pgOrd ~ genome,
+    value.var = "id",
+    fun.aggregate = function(x) list(x))
+  
+  # -- order by pg position
+  setorder(pgw, pgChr, pgOrd, na.last = T)
+  return(pgw)
+}
+
+widepg <- transf_toWide(pgGOI)
+setkey(widepg, pgID)
+fwrite(widepg, file = file.path(wd, "results", "maizeGOIpangenomeWide.txt"), sep = "\t", quote = F)
+```
+
+Calculate the frequency of PAVs per gene in the pangenome and gois
+
+```{r subset ogs}
+pg[,nMaize := sum(genome == "maize"), by = "pgID"]
+pgm <- subset(pg, isArrayRep & nMaize > 0 & isDirectSyn)
+pav <- pgm[,list(n = uniqueN(id)), by = c("genome", "pgID")]
+pav <- subset(pav, complete.cases(pav))
+pav$n[pav$n > 3] <- 3
+tab <- dcast(pav, pgID ~ genome, value.var = "n")
+tab[is.na(tab)] <- 0
+pav <- melt(tab, id.vars = "pgID", variable.name = "genome", value.name = "n")
+
+pav[,isGOI := pgID %in% pgGOI$pgID]
+tab <- with(subset(pav, genome != "maize"), table(isGOI, n > 0))
+fisher.test(tab)
+with(subset(pav, genome != "maize"), sum(n == 0 & isGOI) / sum(isGOI))
+with(subset(pav, genome != "maize"), sum(n == 0 & !isGOI) / sum(!isGOI))
+
+c4s <- c("Phallii", "switchgrass", "Sviridis", "Sorghum")
+tab <- with(subset(pav, isGOI & genome != "maize"), table(genome %in% c4s, n > 0))
+fisher.test(tab)
+with(subset(pav, isGOI & genome != "maize"), sum(n == 0 & genome %in% c4s) / sum(genome %in% c4s))
+with(subset(pav, isGOI & genome != "maize"), sum(n == 0 & !genome %in% c4s) / sum(!genome %in% c4s))
+
+rats <- pav[,list(propAbsent = sum(n == 0)/.N), by = c("genome", "isGOI")]
+rats <- subset(rats, genome != "maize")
+rats[,genome := factor(genome, levels = c("Phallii", "switchgrass", "Sviridis", "Sorghum", "rice", "brachy", "wheat"))]
+p1 <- ggplot(rats, aes(x = genome, y = propAbsent, fill = isGOI))+
+  geom_bar(stat = "identity", position = "dodge")+
+  scale_fill_discrete(guide = "none")
+
+oddsl <- rbindlist(lapply(split(pav, by = "genome")[levels(rats$genome)], function(x){
+  tab <- with(x, table(n > 0, isGOI))
+  isC4 <- x$genome[1] %in% c("Phallii", "switchgrass", "Sviridis", "Sorghum")
+  if(isC4){
+    tst <- fisher.test(tab, conf.level = 0.95, alternative = "greater")
+  }else{
+       tst <- fisher.test(tab, conf.level = 0.95, alternative = "less")
+  }
+  out <- data.table(genome = x$genome[1],
+                    oddsMoreAbsentGlob = tst$estimate, 
+                    loCi = tst$conf.int[1],
+                    hiCi = tst$conf.int[2])
+  return(out)
+}))
+oddsl$hiCi[!is.finite(oddsl$hiCi)] <- oddsl$oddsMoreAbsentGlob[!is.finite(oddsl$hiCi)]
+oddsl$loCi[oddsl$loCi == 0] <- oddsl$oddsMoreAbsentGlob[oddsl$loCi == 0] 
+oddsl[,genome := factor(genome, levels = c("Phallii", "switchgrass", "Sviridis", "Sorghum", "rice", "brachy", "wheat"))]
+p2 <- ggplot(oddsl, aes(x = genome, y = oddsMoreAbsentGlob))+
+  geom_bar(stat = "identity", position = "dodge")+
+  geom_errorbar(aes(ymin = loCi, ymax = hiCi))
+grid.arrange(p1, p2, nrow = 2)
+pdf(file.path(wd, "raw_plots", "Fig2b_sourcePlot.pdf"), height = 3, width = 5)
+grid.arrange(p1, p2, nrow = 2)
+dev.off()
+```
+
+```{r subset ogs}
+pav <- subset(pg, isArrayRep)[,list(n = uniqueN(id)), by = c("genome", "pgID", "isDirectSyn")]
+pav <- subset(pav, complete.cases(pav))
+pav[,nNonMaize := sum(genome != "maize"), by = "pgID"]
+pav <- subset(pav, nNonMaize > 0)
+pav$n[pav$n > 3] <- 3
+tab <- dcast(subset(pav, isDirectSyn), pgID ~ genome, value.var = "n")
+tab[is.na(tab)] <- 0
+
+tabGoi <- subset(tab, pgID %in% pgGOI$pgID)
+```
+
+Do fisher's test for presence absence in each. 
+```{r subset ogs}
+genomeIDs <- unique(pg$genome[pg$genome != "maize"])
+genomeIDsHaploid <- genomeIDs[!genomeIDs %in% c("wheat", "maize", "switchgrass")]
+for(i in genomeIDsHaploid){
+  cat(sprintf("\n############\nTest for over-abundance of absences in %s\n", i))
+  tabr <- rbind(table(tab[[i]] > 0), 
+                table(tabGoi[[i]] > 0))
+  print(tabr)
+  print(fisher.test(tabr))
+}
+```
+
+Plot the ratios of PAVs for GOI and total
+
+
+
+
+

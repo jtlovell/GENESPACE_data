@@ -1,0 +1,219 @@
+---
+title: "GENESPACE MS part 2: Vertebrate sex chrs"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+wd <- "/Users/lovell/Desktop/manuscripts/genespace_2022/GENESPACE_data/results"
+library(GENESPACE)
+library(ggplot2)
+load(file.path(wd, "gparVerts.rda"))
+gpar <- gparVerts
+
+bn <- file.path(wd, "vertebrates")
+gpar$paths$results <- file.path(bn, "results")
+
+gpar$paths$mcscanxCall <- "/Users/lovell/Desktop/programs/MCScanX/"
+
+gpar$paths$blastDir <- file.path(bn, "/orthofinder/Results_Feb12/WorkingDirectory")
+
+gpar$paths$orthogroupsDir <- file.path(bn, "/orthofinder/Results_Feb12/Orthogroups")
+
+
+pltOrd <- gpar$genomes$genomeIDs[c(1:2, 5:4, 7:6, 3, 8, 11:12, 10:9, 15:17, 13:14)]
+gff <- fread(file.path(gpar$paths$results, "gffWithOgs.txt.gz"), na.strings = c("", "NA"), showProgress = F)
+
+blks <- fread(file.path(gpar$paths$results, "syntenicBlocks.txt.gz"), na.strings = c("", "NA"), showProgress = F)
+```
+
+
+## Make SI data files
+```{r}
+convert_pgdb2wide <- function(path2PgDB){
+  pg <- fread(path2PgDB, na.strings = c("", "NA"), showProgress = F)
+  pg <- subset(pg, !is.na(pgID))
+  # -- flag non-syntenic orthogroups
+  wh <- which(pg$isNSOrtho)
+  pg$id[wh] <- paste0(pg$id[wh], "*")
+
+  # -- flag array reps
+  wh <- which(!pg$isArrayRep & !pg$isNSOrtho)
+  pg$id[wh] <- paste0(pg$id[wh], "+")
+
+  # -- reshape to wide format
+  pgw <- dcast(
+    pg,
+    pgID + pgChr + pgOrd ~ genome,
+    value.var = "id",
+    fun.aggregate = function(x) list(x))
+
+  # -- order by pg position
+  setorder(pgw, pgChr, pgOrd, na.last = T)
+  return(pgw)
+}
+
+humanPg <- convert_pgdb2wide(
+  file.path(gpar$paths$results, "human_pangenomeDB.txt.gz"))
+fwrite(
+  humanPg, 
+  file = "/Users/lovell/Desktop/manuscripts/genespace_2022/siData/siData1_humanAnchoredPangenomeAnnotation.txt", 
+  sep = "\t", quote = F)
+
+chickPg <- convert_pgdb2wide(
+  file.path(gpar$paths$results, "chicken_pangenomeDB.txt.gz"))
+fwrite(
+  chickPg, 
+  file = "/Users/lovell/Desktop/manuscripts/genespace_2022/siData/siData2_chickenAnchoredPangenomeAnnotation.txt", 
+  sep = "\t", quote = F)
+
+bout <- with(blks, data.table(
+  genome1 = gen1, genome2 = gen2, chr1 = chr1, chr2 = chr2, 
+  start1 = startBp1, end1 = endBp1, start2 = startBp2, end2 = endBp2, 
+  orient = orient, nHits = nHits1))
+fwrite(
+  bout, 
+  file = "/Users/lovell/Desktop/manuscripts/genespace_2022/siData/siData3_vertSynBlkCoords.txt", 
+  sep = "\t", quote = F)
+```
+
+
+
+# Figure 1
+
+**NOTE**: Figures produced here were integrated and polished in Adobe Illustrator (v26.0.1 on 27-Jan 2022, exclusively by JT Lovell). The specific modifications are listesd below. 
+
+Modifications were made to improve , coloring of sex chromosome segments (red in final version) and other minor changes to text. No modifications were made to any of the "braids", positions of the chromosomes or any of the vectors that are directly linked to underlying data.
+
+The following changes were made to Fig. 1 in illustrator:
+
+- clarity of labels: left justify, move brushtail possum to two lines, fix "playtypus" type
+- plot size: cropped empty black space on plot left, increased plot area border to not cut off labels
+- sex chrs: manually colored the sex chromosomes of each genome red
+- braid borders: added thin white border to braids to improve visual distinction from background
+
+```{r fig1}
+
+zx <- data.table(
+  genome = c("human"),
+  chr = c("X"),
+  start = c(0),
+  end = c(1e9),
+  col = c("#FBAA19"))
+ripdmam <- plot_riparianHits(
+  gsParam = gpar,
+  refGenome = "human",
+  genomeIDs = pltOrd,
+  useOrder = T, 
+  labelChrBiggerThan = 100, 
+  minGenes2plot = 5,
+  useBlks = F,
+  braidAlpha = 1,
+  annotatePlot = F,
+  chrLabCex = .4,
+  chrRectBuffer = .5,
+  genomeLabCex = .5,
+  chrBorder = "white",
+  labelTheseGenomes = "",
+  gapProp = 0.005,
+  onlyTheseRegions = zx)
+
+zx <- data.table(
+  genome = c("chicken"),
+  chr = c("Z"),
+  start = c(0),
+  end = c(1e9),
+  col = c("#00B5C5"))
+ripdavian <- plot_riparianHits(
+  gsParam = gpar,
+  refGenome = "human",
+  genomeIDs = pltOrd,
+  useOrder = T,
+  labelChrBiggerThan = 100, 
+  minGenes2plot = 5,
+  useBlks = F,
+  braidAlpha = 1,
+  annotatePlot = T, add2plot = T,
+  chrLabCex = .4,
+  genomeLabCex = .5,
+  labelTheseGenomes = c("human", "chicken"),
+  gapProp = 0.005,
+  chrBorder = "white",
+  chrRectBuffer = 1.5,
+  onlyTheseRegions = zx)
+fig1_sourceData <- list(mammalX = ripdmam, avianZ = ripdavian)
+
+# -- table of chromosome IDs 
+# to ensure that ones that are too small to be printed are clear
+# see FigS2 caption, but the `chrPos` element contains chr names
+save(fig1_sourceData, file = "/Users/lovell/Desktop/manuscripts/genespace_2022/figures/fig1_sourceData.rda")
+```
+
+
+# Figure S2
+
+The first two edits that were made in illustrator to figure 1 were also applied to figS2
+
+```{r figS2}
+figS2_sourceData <- plot_riparianHits(
+  gsParam = gpar)
+
+# -- table of chromosome IDs 
+# to ensure that ones that are too small to be printed are clear
+# see FigS2 caption, but the `chrPos` element contains chr names
+save(figS2_sourceData, file = "../figures/figS2_sourceData.rda")
+```
+
+# Stats/counting
+
+### X conserved regions
+
+```{r xconserved}
+humanX <- subset(gff, genome == "human" & chr == "X")
+tasX <- subset(gff, genome == "tasmaniandevil" & chr == "X")
+xhumsz <- abs(diff(range(c(humanX$start, humanX$end))))
+xtassz <- abs(diff(range(c(tasX$start, tasX$end))))
+
+xblk <- subset(blks, gen1 == "human" & chr1 == "X")
+xtas <- subset(xblk, gen2 == "tasmaniandevil" & chr2 == "X")
+xhumrng <- abs(diff(range(c(xtas$startBp1, xtas$endBp1))))
+xtasrng <- abs(diff(range(c(xtas$minBp2, xtas$maxBp2))))
+xhumrng/1e6
+xtasrng/1e6
+xhumrng / xhumsz
+xtasrng / xtassz
+```
+
+### Budgie fusion
+
+```{r budg}
+budgeZ <- subset(gff, genome == "budgie" & chr == "Z")
+chickZ <- subset(gff, genome == "chicken" & chr == "Z")
+zbudgsz <- abs(diff(range(c(budgeZ$start, budgeZ$end))))
+zchiksz <- abs(diff(range(c(chickZ$start, chickZ$end))))
+
+zblk <- subset(blks, gen1 == "budgie" & chr1 == "Z")
+zchk <- subset(zblk, gen2 == "chicken" & chr2 == "Z")
+zchk11 <- subset(zblk, gen2 == "chicken" & chr2 == "11")
+zchkrng11 <- abs(diff(range(c(zchk11$minBp2, zchk11$maxBp2))))
+
+zchkrng11/1e6
+```
+
+
+### Monotremes
+
+```{r monotr}
+zxe <- subset(blks, gen1 == "chicken" & chr1 == "Z" & gen2 == "echidna" & chr2 == "X4")
+zxp <- subset(blks, gen1 == "chicken" & chr1 == "Z" & gen2 == "playtypus" & chr2 == "X5")
+gfp <- subset(gff, genome == "playtypus" & chr == "X5")
+with(zxp, sum(maxBp2 - minBp2))/1e6
+with(zxe, sum(maxBp2 - minBp2))/1e6
+with(zxe, sum(maxBp2 - minBp2))/abs(diff(range(c(gfp$start, gfp$end))))
+```
+
